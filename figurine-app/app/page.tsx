@@ -6,7 +6,7 @@ interface FigurineResult {
   id: string;
   fileName: string;
   imageUrl: string;
-  status: "identifying" | "pricing" | "done" | "error";
+  status: "identifying" | "pricing" | "done" | "price-error" | "error";
   error?: string;
   name?: string;
   brand?: string;
@@ -120,21 +120,37 @@ export default function Home() {
             prev.map((r) => (r.id === entry.id ? { ...r, status: "pricing", ...identData } : r))
           );
 
-          // Step 2: Get prices
-          const priceRes = await fetch("/api/prices", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...authHeaders },
-            body: JSON.stringify({ searchQuery: identData.searchQuery }),
-          });
-          if (!priceRes.ok) {
-            const errData = await priceRes.json().catch(() => ({}));
-            throw new Error(errData.error ?? `Price lookup failed (${priceRes.status})`);
+          // Step 2: Get prices (gracefully degrade if eBay is unavailable)
+          const ebaySearchUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(identData.searchQuery ?? identData.name ?? "")}&LH_BIN=1&_sop=15`;
+          try {
+            const priceRes = await fetch("/api/prices", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders },
+              body: JSON.stringify({ searchQuery: identData.searchQuery }),
+            });
+            if (!priceRes.ok) {
+              setResults((prev) =>
+                prev.map((r) =>
+                  r.id === entry.id ? { ...r, status: "price-error", searchUrl: ebaySearchUrl } : r
+                )
+              );
+            } else {
+              const priceData = await priceRes.json();
+              setResults((prev) =>
+                prev.map((r) =>
+                  r.id === entry.id
+                    ? { ...r, status: "done", searchUrl: ebaySearchUrl, ...priceData }
+                    : r
+                )
+              );
+            }
+          } catch {
+            setResults((prev) =>
+              prev.map((r) =>
+                r.id === entry.id ? { ...r, status: "price-error", searchUrl: ebaySearchUrl } : r
+              )
+            );
           }
-          const priceData = await priceRes.json();
-
-          setResults((prev) =>
-            prev.map((r) => (r.id === entry.id ? { ...r, status: "done", ...priceData } : r))
-          );
         } catch (err) {
           setResults((prev) =>
             prev.map((r) =>
@@ -161,7 +177,7 @@ export default function Home() {
   };
 
   const downloadCSV = () => {
-    const doneResults = results.filter((r) => r.status === "done");
+    const doneResults = results.filter((r) => r.status === "done" || r.status === "price-error");
     if (doneResults.length === 0) return;
 
     const headers = [
@@ -201,7 +217,7 @@ export default function Home() {
       const res = await fetch("/api/save", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ spreadsheetUrl: sheetUrl.trim(), items: doneResults }),
+        body: JSON.stringify({ spreadsheetUrl: sheetUrl.trim(), items: results.filter((r) => r.status === "done" || r.status === "price-error") }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Save failed");
@@ -213,7 +229,7 @@ export default function Home() {
     }
   };
 
-  const doneCount = results.filter((r) => r.status === "done").length;
+  const doneCount = results.filter((r) => r.status === "done" || r.status === "price-error").length;
 
   // Password gate
   if (!password) {
@@ -373,6 +389,23 @@ function ResultCard({ result: r }: { result: FigurineResult }) {
               <p className="text-xs text-gray-400 mt-0.5">{r.brand} · {r.series}</p>
               <StatusBadge color="blue" label="💰 Looking up eBay prices…" />
             </>
+          )}
+          {r.status === "price-error" && (
+            <div className="space-y-2">
+              <p className="font-semibold text-white text-sm leading-tight">{r.name}</p>
+              <p className="text-xs text-gray-400">{r.brand} · {r.series}{r.number ? ` · ${r.number}` : ""}</p>
+              <p className="text-xs text-yellow-400">⚠️ Live prices unavailable — eBay API pending</p>
+              {r.searchUrl && (
+                <a
+                  href={r.searchUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block bg-yellow-700 hover:bg-yellow-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  🔍 Search on eBay manually →
+                </a>
+              )}
+            </div>
           )}
           {r.status === "error" && (
             <>
