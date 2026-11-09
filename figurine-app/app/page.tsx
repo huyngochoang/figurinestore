@@ -8,14 +8,12 @@ interface FigurineResult {
   imageUrl: string;
   status: "identifying" | "pricing" | "done" | "error";
   error?: string;
-  // from identify
   name?: string;
   brand?: string;
   series?: string;
   character?: string;
   number?: string;
   searchQuery?: string;
-  // from prices
   low?: string;
   high?: string;
   average?: string;
@@ -26,6 +24,11 @@ interface FigurineResult {
 export default function Home() {
   const [results, setResults] = useState<FigurineResult[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [sheetUrl, setSheetUrl] = useState("");
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [saveMessage, setSaveMessage] = useState("");
 
   const processFiles = useCallback(async (files: FileList | File[]) => {
     const fileArray = Array.from(files).filter((f) =>
@@ -59,9 +62,7 @@ export default function Home() {
 
         setResults((prev) =>
           prev.map((r) =>
-            r.id === entry.id
-              ? { ...r, status: "pricing", ...identData }
-              : r
+            r.id === entry.id ? { ...r, status: "pricing", ...identData } : r
           )
         );
 
@@ -76,9 +77,7 @@ export default function Home() {
 
         setResults((prev) =>
           prev.map((r) =>
-            r.id === entry.id
-              ? { ...r, status: "done", ...priceData }
-              : r
+            r.id === entry.id ? { ...r, status: "done", ...priceData } : r
           )
         );
       } catch (err) {
@@ -88,7 +87,8 @@ export default function Home() {
               ? {
                   ...r,
                   status: "error",
-                  error: err instanceof Error ? err.message : "Unknown error",
+                  error:
+                    err instanceof Error ? err.message : "Unknown error",
                 }
               : r
           )
@@ -126,6 +126,7 @@ export default function Home() {
       "Condition",
       "My Asking Price",
       "Notes",
+      "Date Added",
     ];
 
     const rows = doneResults.map((r) => [
@@ -134,21 +135,20 @@ export default function Home() {
       r.series ?? "",
       r.character ?? "",
       r.number ?? "",
-      r.low ?? "",
-      r.high ?? "",
-      r.average ?? "",
+      r.low ? `$${r.low}` : "",
+      r.high ? `$${r.high}` : "",
+      r.average ? `$${r.average}` : "",
       r.count ?? "",
       r.searchUrl ?? "",
       "",
       "",
       "",
+      new Date().toLocaleDateString("en-US"),
     ]);
 
     const csvContent = [headers, ...rows]
       .map((row) =>
-        row
-          .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-          .join(",")
+        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
       )
       .join("\n");
 
@@ -161,7 +161,36 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
+  const saveToSheets = async () => {
+    const doneResults = results.filter((r) => r.status === "done");
+    if (doneResults.length === 0 || !sheetUrl.trim()) return;
+
+    setSaveStatus("saving");
+    setSaveMessage("");
+
+    try {
+      const res = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheetUrl: sheetUrl.trim(),
+          items: doneResults,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Save failed");
+      setSaveStatus("saved");
+      setSaveMessage(`${data.saved} item${data.saved !== 1 ? "s" : ""} saved to Google Sheets!`);
+    } catch (err) {
+      setSaveStatus("error");
+      setSaveMessage(
+        err instanceof Error ? err.message : "Failed to save to Sheets"
+      );
+    }
+  };
+
   const doneCount = results.filter((r) => r.status === "done").length;
+  const hasSheetCredentials = true; // Always show — server will error gracefully if not configured
 
   return (
     <main className="min-h-screen bg-gray-950 text-white">
@@ -172,15 +201,19 @@ export default function Home() {
             🧸 Figurine Price Finder
           </h1>
           <p className="text-indigo-200 text-sm mt-1">
-            Upload photos → AI identifies your figurines → Live eBay prices
+            Upload photos → AI identifies your figurines → Live eBay prices →
+            Save to Google Sheets
           </p>
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
         {/* Upload Area */}
         <div
-          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
           className={`relative rounded-2xl border-2 border-dashed transition-all duration-200 ${
@@ -212,15 +245,76 @@ export default function Home() {
           </label>
         </div>
 
-        {/* Download CSV button */}
+        {/* Action buttons — only show when there are completed results */}
         {doneCount > 0 && (
-          <button
-            onClick={downloadCSV}
-            className="w-full bg-green-700 hover:bg-green-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
-          >
-            <span>⬇️</span>
-            <span>Download CSV ({doneCount} item{doneCount !== 1 ? "s" : ""})</span>
-          </button>
+          <div className="space-y-3">
+            {/* CSV Download */}
+            <button
+              onClick={downloadCSV}
+              className="w-full bg-green-700 hover:bg-green-600 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+            >
+              <span>⬇️</span>
+              <span>
+                Download CSV ({doneCount} item{doneCount !== 1 ? "s" : ""})
+              </span>
+            </button>
+
+            {/* Google Sheets Save */}
+            {hasSheetCredentials && (
+              <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800 space-y-3">
+                <p className="text-sm font-semibold text-white flex items-center gap-2">
+                  <span>📊</span> Save to Google Sheets
+                </p>
+                <input
+                  type="text"
+                  placeholder="Paste your Google Sheet URL or ID"
+                  value={sheetUrl}
+                  onChange={(e) => {
+                    setSheetUrl(e.target.value);
+                    setSaveStatus("idle");
+                    setSaveMessage("");
+                  }}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  onClick={saveToSheets}
+                  disabled={!sheetUrl.trim() || saveStatus === "saving"}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                >
+                  {saveStatus === "saving" ? (
+                    <>
+                      <span className="animate-spin">⟳</span>
+                      <span>Saving…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>📤</span>
+                      <span>
+                        Save {doneCount} item{doneCount !== 1 ? "s" : ""} to
+                        Sheets
+                      </span>
+                    </>
+                  )}
+                </button>
+                {saveMessage && (
+                  <p
+                    className={`text-sm text-center ${
+                      saveStatus === "saved"
+                        ? "text-green-400"
+                        : "text-red-400"
+                    }`}
+                  >
+                    {saveStatus === "saved" ? "✅ " : "❌ "}
+                    {saveMessage}
+                  </p>
+                )}
+                <p className="text-xs text-gray-500">
+                  Share your sheet with the service account email from your
+                  Google Cloud project, then paste the sheet URL above.
+                </p>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Results */}
@@ -238,7 +332,6 @@ function ResultCard({ result: r }: { result: FigurineResult }) {
   return (
     <div className="bg-gray-900 rounded-2xl overflow-hidden shadow-lg border border-gray-800">
       <div className="flex gap-4 p-4">
-        {/* Thumbnail */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={r.imageUrl}
@@ -248,7 +341,7 @@ function ResultCard({ result: r }: { result: FigurineResult }) {
 
         <div className="flex-1 min-w-0">
           {r.status === "identifying" && (
-            <StatusBadge color="yellow" label="🔍 Identifying figurine..." />
+            <StatusBadge color="yellow" label="🔍 Identifying figurine…" />
           )}
           {r.status === "pricing" && (
             <>
@@ -258,7 +351,7 @@ function ResultCard({ result: r }: { result: FigurineResult }) {
               <p className="text-xs text-gray-400 mt-0.5">
                 {r.brand} · {r.series}
               </p>
-              <StatusBadge color="blue" label="💰 Looking up eBay prices..." />
+              <StatusBadge color="blue" label="💰 Looking up eBay prices…" />
             </>
           )}
           {r.status === "error" && (
@@ -280,7 +373,9 @@ function ResultCard({ result: r }: { result: FigurineResult }) {
               </div>
 
               {r.count === 0 ? (
-                <p className="text-xs text-yellow-400">No active listings found</p>
+                <p className="text-xs text-yellow-400">
+                  No active listings found
+                </p>
               ) : (
                 <div className="grid grid-cols-3 gap-2 mt-2">
                   <PriceStat label="Low" value={r.low} color="green" />
