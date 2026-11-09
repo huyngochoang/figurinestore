@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { appendRow, ensureHeaderRow, extractSpreadsheetId } from "@/lib/sheets";
+import { checkAuth } from "@/lib/auth";
+
+const MAX_ITEMS = 50;
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req);
+  if (authErr) return authErr;
+
   try {
     const body = await req.json();
     const { spreadsheetUrl, items } = body as {
@@ -28,6 +34,12 @@ export async function POST(req: NextRequest) {
     }
     if (!items || items.length === 0) {
       return NextResponse.json({ error: "No items to save" }, { status: 400 });
+    }
+    if (items.length > MAX_ITEMS) {
+      return NextResponse.json(
+        { error: `Too many items. Maximum is ${MAX_ITEMS} per save.` },
+        { status: 400 }
+      );
     }
 
     const spreadsheetId = extractSpreadsheetId(spreadsheetUrl);

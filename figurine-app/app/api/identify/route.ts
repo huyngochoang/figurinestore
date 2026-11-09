@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { checkAuth, checkImageSize } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const authErr = checkAuth(req);
+  if (authErr) return authErr;
+
   try {
     const formData = await req.formData();
     const file = formData.get("image") as File;
@@ -10,6 +13,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No image provided" }, { status: 400 });
     }
 
+    const sizeErr = checkImageSize(file.size);
+    if (sizeErr) return sizeErr;
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const bytes = await file.arrayBuffer();
     const base64 = Buffer.from(bytes).toString("base64");
     const mimeType = file.type || "image/jpeg";
@@ -50,7 +57,10 @@ If you cannot identify the figurine with confidence, still provide your best gue
     });
 
     const content = response.choices[0].message.content || "";
-    const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const cleaned = content
+      .replace(/```json\n?/g, "")
+      .replace(/```\n?/g, "")
+      .trim();
     const data = JSON.parse(cleaned);
 
     return NextResponse.json(data);
@@ -62,4 +72,3 @@ If you cannot identify the figurine with confidence, still provide your best gue
     );
   }
 }
-

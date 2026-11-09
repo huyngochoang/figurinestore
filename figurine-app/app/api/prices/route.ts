@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import axios from "axios";
 import * as cheerio from "cheerio";
+import { checkAuth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req);
+  if (authErr) return authErr;
+
   try {
     const { searchQuery } = await req.json();
     if (!searchQuery) {
