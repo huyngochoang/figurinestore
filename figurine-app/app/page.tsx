@@ -49,6 +49,39 @@ export default function Home() {
     }
   };
 
+  const resizeImage = (file: File): Promise<File> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const MAX = 2048;
+        let { width, height } = img;
+        if (width <= MAX && height <= MAX) {
+          resolve(file);
+          return;
+        }
+        if (width > height) {
+          height = Math.round((height * MAX) / width);
+          width = MAX;
+        } else {
+          width = Math.round((width * MAX) / height);
+          height = MAX;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => resolve(blob ? new File([blob], file.name, { type: "image/jpeg" }) : file),
+          "image/jpeg",
+          0.88
+        );
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+
   const processFiles = useCallback(
     async (files: FileList | File[]) => {
       const fileArray = Array.from(files).filter((f) => f.type.startsWith("image/"));
@@ -68,15 +101,19 @@ export default function Home() {
         const entry = newEntries[i];
 
         try {
-          // Step 1: Identify
+          // Step 1: Identify (resize first to stay within platform body limits)
+          const resized = await resizeImage(file);
           const formData = new FormData();
-          formData.append("image", file);
+          formData.append("image", resized);
           const identRes = await fetch("/api/identify", {
             method: "POST",
             headers: authHeaders,
             body: formData,
           });
-          if (!identRes.ok) throw new Error("Identification failed");
+          if (!identRes.ok) {
+            const errData = await identRes.json().catch(() => ({}));
+            throw new Error(errData.error ?? `Server error ${identRes.status}`);
+          }
           const identData = await identRes.json();
 
           setResults((prev) =>
@@ -89,7 +126,10 @@ export default function Home() {
             headers: { "Content-Type": "application/json", ...authHeaders },
             body: JSON.stringify({ searchQuery: identData.searchQuery }),
           });
-          if (!priceRes.ok) throw new Error("Price lookup failed");
+          if (!priceRes.ok) {
+            const errData = await priceRes.json().catch(() => ({}));
+            throw new Error(errData.error ?? `Price lookup failed (${priceRes.status})`);
+          }
           const priceData = await priceRes.json();
 
           setResults((prev) =>

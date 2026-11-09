@@ -66,9 +66,12 @@ If you cannot identify the figurine with confidence, still provide your best gue
     return NextResponse.json(data);
   } catch (err) {
     console.error("Identify error:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
-      { error: "Failed to identify figurine" },
+      { error: `Identification failed: ${message}` },
       { status: 500 }
     );
   }
 }
+
+export const maxDuration = 60;
